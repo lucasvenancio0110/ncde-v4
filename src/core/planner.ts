@@ -1,14 +1,15 @@
-import type {
-  FactoryState,
-  PlanAction,
-  PlanningResult,
-  Preparador,
-  Setup,
-} from '../domain/types';
-import { minutesBetween, toMinutes } from './time';
+import type { FactoryState, PlanAction, PlanningResult, Preparador, Setup } from '../domain/types';
+import { addMinutes, minutesBetween, toMinutes } from './time';
 
 const DINNER_SLOTS = ['18:00', '18:30', '19:00', '19:30', '20:00', '20:30'] as const;
-const SETUP_PROTECTION_MINUTES = 60;
+const DINNER_DURATION_MINUTES = 60;
+const SETUP_PROTECTION_HORIZON_MINUTES = 60;
+const SETUP_PREPARATION_BUFFER_MINUTES = 30;
+
+interface Occupation {
+  start: number;
+  end: number;
+}
 
 function isOperationallyAvailable(preparador: Preparador): boolean {
   return preparador.status === 'livre' && !preparador.compromissoAte;
@@ -16,37 +17,67 @@ function isOperationallyAvailable(preparador: Preparador): boolean {
 
 function setupNeedsProtection(state: FactoryState, setup: Setup): boolean {
   const delta = minutesBetween(state.agora, setup.horario);
-  return delta >= 0 && delta <= SETUP_PROTECTION_MINUTES;
+  return delta >= 0 && delta <= SETUP_PROTECTION_HORIZON_MINUTES;
 }
 
-function chooseSetupOwner(setup: Setup, available: Preparador[], reservedIds: Set<string>): Preparador | undefined {
+function overlaps(left: Occupation, right: Occupation): boolean {
+  return left.start < right.end && right.start < left.end;
+}
+
+function setupOccupation(state: FactoryState, setup: Setup): Occupation {
+  return {
+    start: Math.max(toMinutes(state.agora), toMinutes(setup.horario) - SETUP_PREPARATION_BUFFER_MINUTES),
+    end: toMinutes(setup.horario) + setup.duracaoEstimadaMin,
+  };
+}
+
+function hasConflict(occupations: Occupation[], candidate: Occupation): boolean {
+  return occupations.some((occupation) => overlaps(occupation, candidate));
+}
+
+function chooseSetupOwner(
+  setup: Setup,
+  available: Preparador[],
+  agendas: Map<string, Occupation[]>,
+  occupation: Occupation,
+): Preparador | undefined {
+  const canReceive = (person: Preparador) => !hasConflict(agendas.get(person.id) ?? [], occupation);
+
   if (setup.responsavelId) {
-    return available.find((person) => person.id === setup.responsavelId && !reservedIds.has(person.id));
+    return available.find((person) => person.id === setup.responsavelId && canReceive(person));
   }
 
-  return available.find((person) => !reservedIds.has(person.id));
+  return available.find(canReceive);
 }
 
-function buildDinnerActions(state: FactoryState, reservedIds: Set<string>): PlanAction[] {
+function buildDinnerActions(state: FactoryState, agendas: Map<string, Occupation[]>): PlanAction[] {
   const candidates = state.preparadores.filter(
-    (person) => !person.jantarConcluido && isOperationallyAvailable(person) && !reservedIds.has(person.id),
+    (person) => !person.jantarConcluido && isOperationallyAvailable(person),
   );
-
+  const assigned = new Set<string>();
   const actions: PlanAction[] = [];
-  let candidateIndex = 0;
 
   for (const slot of DINNER_SLOTS) {
-    if (toMinutes(slot) < toMinutes(state.agora)) continue;
-    const person = candidates[candidateIndex];
-    if (!person) break;
+    const start = toMinutes(slot);
+    const end = start + DINNER_DURATION_MINUTES;
+    if (start < toMinutes(state.agora) || end > toMinutes(state.fimTurno)) continue;
 
+    const person = candidates.find(
+      (candidate) =>
+        !assigned.has(candidate.id) &&
+        !hasConflict(agendas.get(candidate.id) ?? [], { start, end }),
+    );
+    if (!person) continue;
+
+    assigned.add(person.id);
+    agendas.set(person.id, [...(agendas.get(person.id) ?? []), { start, end }]);
     actions.push({
       horario: slot,
+      fim: addMinutes(slot, DINNER_DURATION_MINUTES),
       preparadorId: person.id,
       tipo: 'jantar',
-      motivo: 'Horário definido sem comprometer setups protegidos.',
+      motivo: 'Horário definido sem conflito com compromissos operacionais protegidos.',
     });
-    candidateIndex += 1;
   }
 
   return actions;
@@ -55,7 +86,7 @@ function buildDinnerActions(state: FactoryState, reservedIds: Set<string>): Plan
 export function planShift(state: FactoryState): PlanningResult {
   const actions: PlanAction[] = [];
   const warnings: string[] = [];
-  const reservedIds = new Set<string>();
+  const agendas = new Map<string, Occupation[]>();
   const available = state.preparadores.filter(isOperationallyAvailable);
 
   const criticalSetups = [...state.setups]
@@ -63,23 +94,34 @@ export function planShift(state: FactoryState): PlanningResult {
     .sort((a, b) => toMinutes(a.horario) - toMinutes(b.horario));
 
   for (const setup of criticalSetups) {
-    const owner = chooseSetupOwner(setup, available, reservedIds);
+    const occupation = setupOccupation(state, setup);
+    const owner = chooseSetupOwner(setup, available, agendas, occupation);
 
     if (!owner) {
-      warnings.push(`Setup da ${setup.maquina} às ${setup.horario} está sem preparador disponível.`);
+      const ownerMessage = setup.responsavelId
+        ? 'O responsável definido não está disponível'
+        : 'Não há preparador disponível';
+      warnings.push(`${ownerMessage} para o setup da ${setup.maquina} às ${setup.horario}.`);
       continue;
     }
 
-    reservedIds.add(owner.id);
+    agendas.set(owner.id, [...(agendas.get(owner.id) ?? []), occupation]);
     actions.push({
-      horario: state.agora,
+      horario: addMinutes(setup.horario, -SETUP_PREPARATION_BUFFER_MINUTES),
+      fim: addMinutes(setup.horario, setup.duracaoEstimadaMin),
       preparadorId: owner.id,
       tipo: 'reservar_setup',
       motivo: `Proteger setup da ${setup.maquina} às ${setup.horario}.`,
+      referenciaId: setup.id,
     });
   }
 
-  actions.push(...buildDinnerActions(state, reservedIds));
+  actions.push(...buildDinnerActions(state, agendas));
+  actions.sort((left, right) => {
+    const timeDifference = toMinutes(left.horario) - toMinutes(right.horario);
+    if (timeDifference !== 0) return timeDifference;
+    return left.tipo === 'reservar_setup' ? -1 : 1;
+  });
 
   return {
     actions,
