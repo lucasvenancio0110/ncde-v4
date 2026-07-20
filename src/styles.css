@@ -12,13 +12,16 @@ button, input, select { font: inherit; }
 button { cursor: pointer; }
 .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 80px; }
 .hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+.hero-actions { display: grid; justify-items: end; gap: 8px; }
 .eyebrow { margin: 0 0 8px; font-size: .72rem; font-weight: 800; letter-spacing: .18em; color: #72b7ff; }
 h1 { margin: 0; font-size: clamp(2.5rem, 8vw, 5.5rem); line-height: .95; letter-spacing: -.06em; }
 .subtitle { max-width: 620px; margin: 16px 0 0; color: #9eb0c2; }
-.status { padding: 10px 14px; border-radius: 999px; font-size: .72rem; font-weight: 900; letter-spacing: .08em; white-space: nowrap; }
+.status, .save-status { padding: 10px 14px; border-radius: 999px; font-size: .68rem; font-weight: 900; letter-spacing: .08em; white-space: nowrap; }
 .status.ok { background: #103d32; color: #7ff3c5; border: 1px solid #236c58; }
 .status.risk { background: #4a2327; color: #ffb3ba; border: 1px solid #7d3940; }
 .status.idle { background: #17273a; color: #a9bad0; border: 1px solid #31455e; }
+.save-status.saved { color: #81e6bd; }
+.save-status.pending { color: #ffd38a; }
 .workspace { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(340px, .85fr); gap: 20px; align-items: start; }
 .editor-column { display: grid; gap: 16px; }
 .panel { padding: 24px; border: 1px solid #23364c; border-radius: 24px; background: rgba(10, 24, 41, .9); box-shadow: 0 24px 70px rgba(0, 0, 0, .24); }
@@ -35,10 +38,11 @@ input, select { width: 100%; min-height: 46px; padding: 11px 12px; border-radius
 input:focus, select:focus { border-color: #72b7ff; box-shadow: 0 0 0 3px rgba(114, 183, 255, .12); }
 .editable-list { display: grid; gap: 12px; margin-top: 18px; }
 .editable-card { display: grid; gap: 12px; padding: 16px; border-radius: 16px; border: 1px solid #1d3249; background: #0d1d30; }
-.primary-button, .secondary-button, .danger-button { border: 0; border-radius: 12px; font-weight: 850; }
+.primary-button, .secondary-button, .danger-button, .text-button { border: 0; border-radius: 12px; font-weight: 850; }
 .primary-button { min-height: 54px; padding: 14px 20px; background: linear-gradient(135deg, #5aa9ff, #7cc8ff); color: #06111d; letter-spacing: .08em; box-shadow: 0 14px 32px rgba(64, 157, 255, .24); }
 .secondary-button { padding: 10px 13px; background: #15304a; color: #9ed0ff; border: 1px solid #2c5276; }
 .danger-button { justify-self: start; padding: 8px 0; background: transparent; color: #ff9fa8; }
+.text-button { padding: 8px 0; background: transparent; color: #9eb0c2; text-decoration: underline; text-underline-offset: 4px; }
 .timeline { display: grid; gap: 12px; margin-top: 20px; }
 .action { display: grid; grid-template-columns: 72px 1fr; gap: 16px; padding: 16px; border-radius: 16px; background: #0d1d30; border: 1px solid #1d3249; }
 .action time { font-size: 1.05rem; font-weight: 900; color: #72b7ff; }
@@ -62,6 +66,7 @@ input:focus, select:focus { border-color: #72b7ff; box-shadow: 0 0 0 3px rgba(11
 @media (max-width: 620px) {
   .shell { width: min(100% - 20px, 1180px); padding-top: 28px; }
   .hero { flex-direction: column; }
+  .hero-actions { justify-items: start; }
   .panel { padding: 18px; border-radius: 18px; }
   .two-columns { grid-template-columns: 1fr; }
   .section-heading { align-items: flex-start; }
