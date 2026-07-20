@@ -9,6 +9,20 @@ export function toMinutes(value: string): number {
   return hours * 60 + minutes;
 }
 
+export function fromMinutes(total: number): string {
+  if (!Number.isInteger(total) || total < 0 || total >= 24 * 60) {
+    throw new Error(`Minutos fora do dia: ${total}`);
+  }
+
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+export function addMinutes(value: string, amount: number): string {
+  return fromMinutes(toMinutes(value) + amount);
+}
+
 export function minutesBetween(from: string, to: string): number {
   return toMinutes(to) - toMinutes(from);
 }
