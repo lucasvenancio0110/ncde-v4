@@ -14,14 +14,27 @@ const baseState: FactoryState = {
 };
 
 describe('planShift', () => {
-  it('reserva um preparador para setup crítico antes de montar os jantares', () => {
+  it('protege o setup e bloqueia jantar conflitante do responsável', () => {
     const result = planShift({
       ...baseState,
-      setups: [{ id: 'setup-130', maquina: 'TNL 130', horario: '19:00', duracaoEstimadaMin: 120, prioridade: 'alta' }],
+      setups: [
+        {
+          id: 'setup-130',
+          maquina: 'TNL 130',
+          horario: '19:00',
+          duracaoEstimadaMin: 120,
+          prioridade: 'alta',
+        },
+      ],
     });
 
     expect(result.valid).toBe(true);
-    expect(result.actions[0]).toMatchObject({ preparadorId: 'lucas', tipo: 'reservar_setup' });
+    expect(result.actions.find((action) => action.tipo === 'reservar_setup')).toMatchObject({
+      horario: '18:30',
+      fim: '21:00',
+      preparadorId: 'lucas',
+      referenciaId: 'setup-130',
+    });
     expect(result.actions.some((action) => action.preparadorId === 'lucas' && action.tipo === 'jantar')).toBe(false);
     expect(result.actions.some((action) => action.preparadorId === 'alan' && action.tipo === 'jantar')).toBe(true);
   });
@@ -29,20 +42,79 @@ describe('planShift', () => {
   it('respeita o responsável previamente definido para o setup', () => {
     const result = planShift({
       ...baseState,
-      setups: [{ id: 'setup-130', maquina: 'TNL 130', horario: '18:30', responsavelId: 'alan', duracaoEstimadaMin: 120, prioridade: 'alta' }],
+      setups: [
+        {
+          id: 'setup-130',
+          maquina: 'TNL 130',
+          horario: '18:30',
+          responsavelId: 'alan',
+          duracaoEstimadaMin: 120,
+          prioridade: 'alta',
+        },
+      ],
     });
 
-    expect(result.actions[0]).toMatchObject({ preparadorId: 'alan', tipo: 'reservar_setup' });
+    expect(result.actions.find((action) => action.tipo === 'reservar_setup')).toMatchObject({
+      preparadorId: 'alan',
+    });
   });
 
   it('marca o plano como inválido quando não há preparador para setup crítico', () => {
     const result = planShift({
       ...baseState,
       preparadores: baseState.preparadores.map((person) => ({ ...person, status: 'ajuste' as const })),
-      setups: [{ id: 'setup-130', maquina: 'TNL 130', horario: '18:30', duracaoEstimadaMin: 120, prioridade: 'alta' }],
+      setups: [
+        {
+          id: 'setup-130',
+          maquina: 'TNL 130',
+          horario: '18:30',
+          duracaoEstimadaMin: 120,
+          prioridade: 'alta',
+        },
+      ],
     });
 
     expect(result.valid).toBe(false);
     expect(result.warnings).toHaveLength(1);
+  });
+
+  it('não permite dois setups sobrepostos para o mesmo responsável', () => {
+    const result = planShift({
+      ...baseState,
+      setups: [
+        {
+          id: 'setup-130',
+          maquina: 'TNL 130',
+          horario: '18:30',
+          responsavelId: 'lucas',
+          duracaoEstimadaMin: 120,
+          prioridade: 'alta',
+        },
+        {
+          id: 'setup-005',
+          maquina: 'TNL 005',
+          horario: '19:00',
+          responsavelId: 'lucas',
+          duracaoEstimadaMin: 120,
+          prioridade: 'alta',
+        },
+      ],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.warnings[0]).toContain('responsável definido não está disponível');
+  });
+
+  it('ignora slots de jantar que já passaram', () => {
+    const result = planShift({ ...baseState, agora: '19:10' });
+
+    expect(result.actions[0]?.horario).toBe('19:30');
+  });
+
+  it('não agenda jantar depois do fim do turno', () => {
+    const result = planShift({ ...baseState, agora: '20:00', fimTurno: '21:00' });
+
+    expect(result.actions).toHaveLength(1);
+    expect(result.actions[0]).toMatchObject({ horario: '20:00', fim: '21:00', tipo: 'jantar' });
   });
 });
