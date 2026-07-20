@@ -33,9 +33,11 @@ export interface FactoryState {
 
 export interface PlanAction {
   horario: string;
+  fim?: string;
   preparadorId: string;
   tipo: 'jantar' | 'reservar_setup';
   motivo: string;
+  referenciaId?: string;
 }
 
 export interface PlanningResult {
