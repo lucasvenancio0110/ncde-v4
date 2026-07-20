@@ -1,5 +1,5 @@
 import type { FactoryState, PlanAction, PlanningResult, Preparador, Setup } from '../domain/types';
-import { addMinutes, minutesBetween, toMinutes } from './time';
+import { addMinutes, fromMinutes, minutesBetween, toMinutes } from './time';
 
 const DINNER_SLOTS = ['18:00', '18:30', '19:00', '19:30', '20:00', '20:30'] as const;
 const DINNER_DURATION_MINUTES = 60;
@@ -11,8 +11,14 @@ interface Occupation {
   end: number;
 }
 
-function isOperationallyAvailable(preparador: Preparador): boolean {
-  return preparador.status === 'livre' && !preparador.compromissoAte;
+function availabilityStart(state: FactoryState, preparador: Preparador): number | undefined {
+  const now = toMinutes(state.agora);
+
+  if (preparador.status === 'indisponivel') return undefined;
+  if (preparador.status === 'livre' && !preparador.compromissoAte) return now;
+  if (!preparador.compromissoAte) return undefined;
+
+  return Math.max(now, toMinutes(preparador.compromissoAte));
 }
 
 function setupNeedsProtection(state: FactoryState, setup: Setup): boolean {
@@ -35,24 +41,40 @@ function hasConflict(occupations: Occupation[], candidate: Occupation): boolean 
   return occupations.some((occupation) => overlaps(occupation, candidate));
 }
 
+function canReceiveAt(
+  state: FactoryState,
+  preparador: Preparador,
+  agendas: Map<string, Occupation[]>,
+  occupation: Occupation,
+): boolean {
+  const availableAt = availabilityStart(state, preparador);
+
+  return (
+    availableAt !== undefined &&
+    availableAt <= occupation.start &&
+    !hasConflict(agendas.get(preparador.id) ?? [], occupation)
+  );
+}
+
 function chooseSetupOwner(
   setup: Setup,
-  available: Preparador[],
+  preparadores: Preparador[],
+  state: FactoryState,
   agendas: Map<string, Occupation[]>,
   occupation: Occupation,
 ): Preparador | undefined {
-  const canReceive = (person: Preparador) => !hasConflict(agendas.get(person.id) ?? [], occupation);
-
   if (setup.responsavelId) {
-    return available.find((person) => person.id === setup.responsavelId && canReceive(person));
+    return preparadores.find(
+      (person) => person.id === setup.responsavelId && canReceiveAt(state, person, agendas, occupation),
+    );
   }
 
-  return available.find(canReceive);
+  return preparadores.find((person) => canReceiveAt(state, person, agendas, occupation));
 }
 
 function buildDinnerActions(state: FactoryState, agendas: Map<string, Occupation[]>): PlanAction[] {
   const candidates = state.preparadores.filter(
-    (person) => !person.jantarConcluido && isOperationallyAvailable(person),
+    (person) => !person.jantarConcluido && availabilityStart(state, person) !== undefined,
   );
   const assigned = new Set<string>();
   const actions: PlanAction[] = [];
@@ -62,11 +84,16 @@ function buildDinnerActions(state: FactoryState, agendas: Map<string, Occupation
     const end = start + DINNER_DURATION_MINUTES;
     if (start < toMinutes(state.agora) || end > toMinutes(state.fimTurno)) continue;
 
-    const person = candidates.find(
-      (candidate) =>
+    const person = candidates.find((candidate) => {
+      const availableAt = availabilityStart(state, candidate);
+
+      return (
         !assigned.has(candidate.id) &&
-        !hasConflict(agendas.get(candidate.id) ?? [], { start, end }),
-    );
+        availableAt !== undefined &&
+        availableAt <= start &&
+        !hasConflict(agendas.get(candidate.id) ?? [], { start, end })
+      );
+    });
     if (!person) continue;
 
     assigned.add(person.id);
@@ -76,7 +103,7 @@ function buildDinnerActions(state: FactoryState, agendas: Map<string, Occupation
       fim: addMinutes(slot, DINNER_DURATION_MINUTES),
       preparadorId: person.id,
       tipo: 'jantar',
-      motivo: 'Horário definido sem conflito com compromissos operacionais protegidos.',
+      motivo: 'Horário definido após o compromisso atual e sem conflito com setups protegidos.',
     });
   }
 
@@ -87,7 +114,6 @@ export function planShift(state: FactoryState): PlanningResult {
   const actions: PlanAction[] = [];
   const warnings: string[] = [];
   const agendas = new Map<string, Occupation[]>();
-  const available = state.preparadores.filter(isOperationallyAvailable);
 
   const criticalSetups = [...state.setups]
     .filter((setup) => setupNeedsProtection(state, setup))
@@ -95,20 +121,25 @@ export function planShift(state: FactoryState): PlanningResult {
 
   for (const setup of criticalSetups) {
     const occupation = setupOccupation(state, setup);
-    const owner = chooseSetupOwner(setup, available, agendas, occupation);
+
+    if (occupation.end > toMinutes(state.fimTurno)) {
+      warnings.push(`O setup da ${setup.maquina} ultrapassa o fim do turno (${state.fimTurno}).`);
+    }
+
+    const owner = chooseSetupOwner(setup, state.preparadores, state, agendas, occupation);
 
     if (!owner) {
       const ownerMessage = setup.responsavelId
-        ? 'O responsável definido não está disponível'
-        : 'Não há preparador disponível';
+        ? 'O responsável definido não estará disponível a tempo'
+        : 'Não há preparador disponível a tempo';
       warnings.push(`${ownerMessage} para o setup da ${setup.maquina} às ${setup.horario}.`);
       continue;
     }
 
     agendas.set(owner.id, [...(agendas.get(owner.id) ?? []), occupation]);
     actions.push({
-      horario: addMinutes(setup.horario, -SETUP_PREPARATION_BUFFER_MINUTES),
-      fim: addMinutes(setup.horario, setup.duracaoEstimadaMin),
+      horario: fromMinutes(occupation.start),
+      fim: fromMinutes(occupation.end),
       preparadorId: owner.id,
       tipo: 'reservar_setup',
       motivo: `Proteger setup da ${setup.maquina} às ${setup.horario}.`,
